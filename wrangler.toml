@@ -1,3 +1,4 @@
+main = "index.js"
 name = "sol-sniper-worker"
 compatibility_date = "2025-06-15"
 
