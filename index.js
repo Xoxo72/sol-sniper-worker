@@ -18,30 +18,51 @@ const WATCHLIST = new Set([
 export default {
   async fetch(req, env, ctx) {
     const body = await req.json();
+    const sig = body.signature;
     const acct = body.account;
-    if (!WATCHLIST.has(acct)) return new Response("skip", {status:200});
+
+    if (!WATCHLIST.has(acct)) return new Response("skip", { status: 200 });
 
     const logs = body.transaction?.meta?.logMessages || [];
-    const mintLine = logs.find(l => l.includes("InitializeMint"));
-    if (!mintLine) return new Response("no mint", {status:200});
+    const mintLine = logs.find((l) => l.includes("InitializeMint"));
+    if (!mintLine) return new Response("no mint", { status: 200 });
     const mint = mintLine.split(" ").pop();
 
     const [supply, price] = await Promise.all([
       fetch(env.RPC_URL, {
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({jsonrpc:"2.0",id:1,method:"getTokenSupply",params:[mint]})
-      }).then(r=>r.json()).then(j=>Number(j.result.value.uiAmount)),
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "getTokenSupply",
+          params: [mint],
+        }),
+      })
+        .then((r) => r.json())
+        .then((j) => Number(j.result.value.uiAmount)),
       fetch(`https://public-api.birdeye.so/defi/price?address=${mint}`)
-        .then(r=>r.json()).then(j=>Number(j.data.value)||0)
+        .then((r) => r.json())
+        .then((j) => Number(j.data.value) || 0),
     ]);
-    if (!price || supply*price > 5_000) return new Response("mc>5k",{status:200});
 
-    ctx.waitUntil(fetch(env.BOT_URL,{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({mint, supply, price})
-    }));
-    return new Response("sent",{status:200});
-  }
-}
+    if (!price || supply * price > 5000)
+      return new Response("mc>5k", { status: 200 });
+
+    // Nouveau filtre : SOL ≥ 0.2
+    const lamports =
+      body.transaction?.message?.instructions?.[0]?.parsed?.info?.lamports || 0;
+    const amountSOL = lamports / 1e9;
+    if (amountSOL < 0.2)
+      return new Response("amount too low", { status: 200 });
+
+    ctx.waitUntil(
+      fetch(env.BOT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mint, sig, supply, price, amountSOL }),
+      })
+    );
+    return new Response("sent", { status: 200 });
+  },
+};
